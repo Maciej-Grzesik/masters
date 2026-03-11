@@ -1,7 +1,2 @@
-import torch 
-
-
-def calculate_mahobian(
-        device: torch.device
-) -> None:
+def calculate_mahobian() -> None:
     return None
