@@ -4,7 +4,7 @@ import numpy as np
 # Z - features, y - labels
 def coding_rate(Z, eps=1e-4):
     n, d = Z.shape
-    (_, rate) = np.linalg.slogdet((np.eye(d) + 1 / (n * eps) * Z.transpose() @ Z))
+    _, rate = np.linalg.slogdet((np.eye(d) + 1 / (n * eps) * Z.transpose() @ Z))
 
     return 0.5 * rate
 

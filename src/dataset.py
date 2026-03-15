@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Iterable
 
 from PIL import Image
-from torch.utils.data import Dataset
+from torch import Generator
+from torch.utils.data import Dataset, Subset, random_split
 
 
 @dataclass(slots=True)
@@ -15,7 +16,7 @@ class CropSample:
     bbox: tuple[float, float, float, float]
     label: int
     label_name: str
-    split: str
+    source_split: str
     annotation_id: int
 
 
@@ -23,18 +24,22 @@ class COCODroneBirdCrops(Dataset):
     def __init__(
         self,
         dataset_root: str | Path,
-        splits: Iterable[str] = ("train", "valid", "test"),
-        include_labels: Iterable[str] = ("drone", "bird"),
+        include_labels: Iterable[str] | None = None,
         transform=None,
         min_bbox_size: float = 4.0,
     ) -> None:
         self.dataset_root = Path(dataset_root)
-        self.splits = tuple(splits)
         self.transform = transform
         self.min_bbox_size = min_bbox_size
 
-        selected = tuple(lbl.lower() for lbl in include_labels)
-        self.label_to_index = {name: idx for idx, name in enumerate(selected)}
+        if include_labels is None:
+            self.selected_labels: tuple[str, ...] | None = None
+            self.label_to_index: dict[str, int] = {}
+        else:
+            selected = tuple(dict.fromkeys(lbl.lower() for lbl in include_labels))
+            self.selected_labels = selected
+            self.label_to_index = {name: idx for idx, name in enumerate(selected)}
+
         self.index_to_label = {idx: name for name, idx in self.label_to_index.items()}
         self.samples: list[CropSample] = []
 
@@ -43,11 +48,25 @@ class COCODroneBirdCrops(Dataset):
     def _build_index(self) -> None:
         annotation_root = self.dataset_root / "Annotations" / "COCO Annotation format"
         image_root = self.dataset_root / "Images"
+        ann_paths = sorted(annotation_root.glob("*/_annotations.coco.json"))
 
-        for split in self.splits:
-            ann_path = annotation_root / split / "_annotations.coco.json"
-            if not ann_path.exists():
-                continue
+        if self.selected_labels is None:
+            all_labels: set[str] = set()
+            for ann_path in ann_paths:
+                with ann_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                all_labels.update(
+                    str(c["name"]).lower() for c in data.get("categories", [])
+                )
+
+            selected = tuple(sorted(all_labels))
+            self.label_to_index = {name: idx for idx, name in enumerate(selected)}
+            self.index_to_label = {
+                idx: name for name, idx in self.label_to_index.items()
+            }
+
+        for ann_path in ann_paths:
+            split = ann_path.parent.name
 
             with ann_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -93,7 +112,7 @@ class COCODroneBirdCrops(Dataset):
             bbox=bbox,
             label=self.label_to_index[category_name],
             label_name=category_name,
-            split=split,
+            source_split=split,
             annotation_id=int(ann.get("id", -1)),
         )
 
@@ -124,4 +143,24 @@ class COCODroneBirdCrops(Dataset):
         if self.transform is not None:
             crop = self.transform(crop)
 
-        return crop, sample.label, sample.split
+        return crop, sample.label
+
+
+def train_valid_test_split(
+    dataset: Dataset,
+    train_ratio,
+    test_ratio,
+    seed: int,
+) -> tuple[Subset, Subset, Subset]:
+    n = len(dataset)
+    train_len = int(n * train_ratio)
+    test_len = int(n * test_ratio)
+    valid_len = n - train_len - test_len
+
+    generator = Generator().manual_seed(seed)
+    train_set, valid_set, test_set = random_split(
+        dataset,
+        lengths=[train_len, valid_len, test_len],
+        generator=generator,
+    )
+    return train_set, valid_set, test_set

@@ -9,6 +9,23 @@ wheels/
 # Virtual environments
 .venv
 
-dataset
+dataset/**
+!dataset/
+!dataset/**/
+
+!dataset/**/DeepFeatures/
+!dataset/**/DeepFeatures/**
+
+dataset/**/Images/**
+dataset/**/Annotations/**
+
+dataset/**/*.jpg
+dataset/**/*.jpeg
+dataset/**/*.png
+dataset/**/*.bmp
+dataset/**/*.xml
+dataset/**/*.json
+dataset/**/*.txt
+
 papers
 notes
