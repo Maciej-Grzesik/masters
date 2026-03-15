@@ -1,0 +1,2 @@
+dataset/**/DeepFeatures/**/*.npy filter=lfs diff=lfs merge=lfs -text
+dataset/**/DeepFeatures/**/*.npz filter=lfs diff=lfs merge=lfs -text
