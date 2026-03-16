@@ -167,7 +167,8 @@ def evaluate_layers(
             device=device,
             progress_desc=f"{model_name} {tag} ({block_name})",
         )
-        score = float(transrate(z, y))
+        _, y_contiguous = np.unique(y, return_inverse=True)
+        score = float(transrate(z, y_contiguous))
         records.append(
             {
                 "layer_tag": tag,
