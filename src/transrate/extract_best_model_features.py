@@ -350,7 +350,6 @@ def main() -> None:
         layer_results_csv=args.layer_results_csv,
     )
 
-    # Resolve layer/block: explicit args > best from layer CSV > fallback to L
     layer_tag = args.layer_tag
     block_name = args.block_name
 
@@ -366,7 +365,6 @@ def main() -> None:
                 f"Best layer from CSV -> layer_tag={layer_tag}, block_name={block_name}"
             )
         except FileNotFoundError:
-            # Fallback when layer CSV is not available
             layer_tag = "L"
 
     weight_obj = resolve_weight(model_name, weight_name, is_random)

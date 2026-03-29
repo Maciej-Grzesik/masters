@@ -1,0 +1,16 @@
+{
+  "model_name": "wide_resnet101_2",
+  "weight_name": "IMAGENET1K_V2",
+  "is_random": false,
+  "best_transrate": 609.9284905418635,
+  "id_classes": [
+    "airplane",
+    "drone",
+    "helicopter"
+  ],
+  "valid_accuracy": 0.9677888611803824,
+  "weights_path": "outputs/ood_training/best_id_model_state_dict.pt",
+  "embedding_csv": "outputs/ood_training/test_embeddings_predictions.csv",
+  "tsne_plot": "outputs/ood_training/manifold_tsne.png",
+  "umap_plot": "outputs/ood_training/manifold_umap.png"
+}
