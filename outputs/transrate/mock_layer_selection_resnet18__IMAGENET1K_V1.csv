@@ -1,0 +1,8 @@
+layer_tag,block_name,transrate,feature_dim,n_samples,model,weight,is_random,order
+L,layer4.1,999.0,512,31588,resnet18,IMAGENET1K_V1,False,0
+L-1,layer4.0,850.0,512,31588,resnet18,IMAGENET1K_V1,False,1
+L-2,layer3.1,700.0,256,31588,resnet18,IMAGENET1K_V1,False,2
+L-3,layer3.0,650.0,256,31588,resnet18,IMAGENET1K_V1,False,3
+L-4,layer2.1,500.0,128,31588,resnet18,IMAGENET1K_V1,False,4
+L-5,layer2.0,450.0,128,31588,resnet18,IMAGENET1K_V1,False,5
+L-6,layer1.1,300.0,64,31588,resnet18,IMAGENET1K_V1,False,6

@@ -1,0 +1,3 @@
+model,weight,is_random,transrate,n_samples,feature_dim
+resnet18,IMAGENET1K_V1,False,9999.0,31588,512
+resnet34,IMAGENET1K_V1,False,10.0,31588,512

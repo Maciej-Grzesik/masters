@@ -305,7 +305,12 @@ def extract_block_features_for_indices(
 
     handle = block.register_forward_hook(_hook)
     with torch.no_grad():
-        for x_batch, _ in loader:
+        for x_batch, _ in tqdm(
+            loader,
+            desc="Block feature extraction",
+            unit="batch",
+            leave=False,
+        ):
             _ = model(x_batch.to(device))
     handle.remove()
 
@@ -358,7 +363,12 @@ def evaluate_fold(
     methods = build_methods(method_names=method_names, seed=seed, fold_id=fold_id)
 
     rows: list[dict] = []
-    for method_name, model in methods.items():
+    for method_name, model in tqdm(
+        methods.items(),
+        desc=f"Fold {fold_id}: methods",
+        unit="method",
+        leave=False,
+    ):
         model.fit(train_x)
         scores = model.score_samples(eval_x)
         preds = model.predict(eval_x)
@@ -474,7 +484,11 @@ def run_experiment(config: ExperimentConfig) -> dict:
 
     all_rows: list[dict] = []
     training_runs: list[dict] = []
-    for fold_idx, (train_rel, test_rel) in enumerate(skf.split(id_indices, y_id), start=1):
+    split_iter = list(skf.split(id_indices, y_id))
+    for fold_idx, (train_rel, test_rel) in enumerate(
+        tqdm(split_iter, desc="OOD folds", unit="fold"),
+        start=1,
+    ):
         id_train_indices = id_indices[train_rel]
         id_test_indices = id_indices[test_rel]
 
@@ -555,7 +569,13 @@ def run_experiment(config: ExperimentConfig) -> dict:
     }
 
     statistical_tests: list[dict] = []
-    for method_a, method_b in combinations(df["method"].unique().tolist(), 2):
+    pairs = list(combinations(df["method"].unique().tolist(), 2))
+    for method_a, method_b in tqdm(
+        pairs,
+        desc="Statistical comparisons",
+        unit="pair",
+        leave=False,
+    ):
         stat = run_paired_tests(
             method_a=method_a,
             method_b=method_b,

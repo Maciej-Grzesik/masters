@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 
 @dataclass(slots=True)
@@ -52,7 +53,12 @@ def _run_eval_epoch(
     total_samples = 0
 
     with torch.no_grad():
-        for x_batch, y_batch in loader:
+        for x_batch, y_batch in tqdm(
+            loader,
+            desc="eval batches",
+            unit="batch",
+            leave=False,
+        ):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
             logits = model(x_batch)
@@ -82,7 +88,12 @@ def _run_train_epoch(
     total_correct = 0
     total_samples = 0
 
-    for x_batch, y_batch in loader:
+    for x_batch, y_batch in tqdm(
+        loader,
+        desc="train batches",
+        unit="batch",
+        leave=False,
+    ):
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
@@ -136,7 +147,11 @@ def train(
 
     epochs = max(1, int(config.epochs))
 
-    for epoch in range(1, epochs + 1):
+    for epoch in tqdm(
+        range(1, epochs + 1),
+        desc="train epochs",
+        unit="epoch",
+    ):
         train_loss, train_acc = _run_train_epoch(
             model=model,
             loader=train_loader,
