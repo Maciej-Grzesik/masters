@@ -11,57 +11,14 @@ import seaborn as sns
 import torch
 from torch.utils.data import DataLoader
 from torchvision import models
-from torchvision.transforms import Compose, Normalize, Resize, ToTensor
 from tqdm import tqdm
 
 from src.dataset import COCODroneBirdCrops
 from src.transrate.transrate import transrate
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
-
-
-SEED = 1410
-DEFAULT_DATASET_ROOT = PROJECT_ROOT / "dataset" / "AOD_4"
-OUTPUT_DIR = PROJECT_ROOT
-
-RESNET_MODEL_NAMES = [
-    "resnet18",
-    "resnet34",
-    "resnet50",
-    "resnet101",
-    "resnet152",
-    "resnext50_32x4d",
-    "resnext101_32x8d",
-    "wide_resnet50_2",
-    "wide_resnet101_2",
-]
-
-
-def set_seed(seed: int) -> None:
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def default_transform() -> Compose:
-    return Compose(
-        [
-            Resize((224, 224)),
-            ToTensor(),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
+from src.utils import get_device
+import src.utils.const as CONST
+from src.utils.set_seed import set_seed
+from src.utils.vision import imagenet_eval_transform_224
 
 
 def extract_features_and_labels(
@@ -94,7 +51,7 @@ def extract_features_and_labels(
 def get_weight_entries(model_name: str):
     weight_enum = models.get_model_weights(model_name)
     weight_entries = [(w.name, w) for w in weight_enum]
-    weight_entries.append((f"random_seed_{SEED}", None))
+    weight_entries.append((f"random_seed_{CONST.SEED}", None))
     return weight_entries
 
 
@@ -106,7 +63,7 @@ def evaluate_single_setup(
     device: torch.device,
 ) -> dict:
     if weight_obj is None:
-        set_seed(SEED)
+        set_seed(CONST.SEED)
 
     model = models.get_model(model_name, weights=weight_obj)
     feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]).to(device)
@@ -135,7 +92,7 @@ def make_scatter_plot(results_df: pd.DataFrame, output_path: Path) -> None:
     sns.set_theme(style="whitegrid")
     df = results_df.copy()
 
-    model_order = RESNET_MODEL_NAMES.copy()
+    model_order = CONST.RESNET_MODEL_NAMES.copy()
     weight_order = sorted(df["weight"].astype(str).unique().tolist())
 
     markers_cycle = ["o", "s", "^", "D", "P", "X", "*", "v", "<", ">", "h", "8"]
@@ -145,13 +102,15 @@ def make_scatter_plot(results_df: pd.DataFrame, output_path: Path) -> None:
     }
 
     palette = sns.color_palette("tab20", n_colors=max(3, len(weight_order)))
-    color_map = {weight: palette[i % len(palette)] for i, weight in enumerate(weight_order)}
+    color_map = {
+        weight: palette[i % len(palette)] for i, weight in enumerate(weight_order)
+    }
 
     offsets = np.linspace(-0.3, 0.3, num=max(1, len(weight_order)))
     offset_map = {weight: offsets[i] for i, weight in enumerate(weight_order)}
     x_map = {name: idx for idx, name in enumerate(model_order)}
 
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(CONST.SEED)
     df["x"] = df["model"].map(x_map).astype(float)
     df["x"] = df["x"] + df["weight"].map(offset_map).astype(float)
     df["x"] = df["x"] + rng.normal(0.0, 0.015, size=len(df))
@@ -184,24 +143,24 @@ def make_scatter_plot(results_df: pd.DataFrame, output_path: Path) -> None:
 
 
 def run_model_selection(results_csv_path: Path, figure_path: Path) -> None:
-    set_seed(SEED)
+    set_seed(CONST.SEED)
     results_csv_path.parent.mkdir(parents=True, exist_ok=True)
 
     device = get_device()
     print(f"Device: {device}")
 
     dataset = COCODroneBirdCrops(
-        dataset_root=DEFAULT_DATASET_ROOT,
-        transform=default_transform(),
+        dataset_root=CONST.DEFAULT_DATASET_ROOT,
+        transform=imagenet_eval_transform_224(),
     )
 
     loader = DataLoader(dataset=dataset, batch_size=64, num_workers=0, shuffle=False)
 
     results: list[dict] = []
-    total_runs = sum(len(get_weight_entries(name)) for name in RESNET_MODEL_NAMES)
+    total_runs = sum(len(get_weight_entries(name)) for name in CONST.RESNET_MODEL_NAMES)
     progress = tqdm(total=total_runs, desc="Model selection", unit="setup")
 
-    for model_name in RESNET_MODEL_NAMES:
+    for model_name in CONST.RESNET_MODEL_NAMES:
         for weight_name, weight_obj in tqdm(
             get_weight_entries(model_name),
             desc=f"{model_name} weights",
@@ -241,13 +200,13 @@ def main() -> None:
     parser.add_argument(
         "--results-csv",
         type=Path,
-        default=OUTPUT_DIR / "resnet_transrate_results.csv",
+        default=CONST.OUTPUT_DIR / "resnet_transrate_results.csv",
         help="Path to model selection CSV (input for --plot-only, output otherwise).",
     )
     parser.add_argument(
         "--plot-path",
         type=Path,
-        default=OUTPUT_DIR / "resnet_transrate_scatter.png",
+        default=CONST.OUTPUT_DIR / "resnet_transrate_scatter.png",
         help="Output path for the scatter plot.",
     )
     args = parser.parse_args()

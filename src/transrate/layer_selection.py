@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,84 +10,28 @@ import seaborn as sns
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchvision import models
-from torchvision.transforms import Compose, Normalize, Resize, ToTensor
 from tqdm import tqdm
 
 from src.dataset import COCODroneBirdCrops
+from src.modelling.backbone_utils import (
+    choose_best_model_from_csv,
+    get_resnet_blocks as backbone_get_resnet_blocks,
+    load_backbone_and_target_block,
+)
 from src.transrate.transrate import transrate
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
-
-SEED = 1410
-DEFAULT_DATASET_ROOT = PROJECT_ROOT / "dataset" / "AOD_4"
-DEFAULT_RESULTS_CSV = PROJECT_ROOT / "resnet_transrate_results.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT
-
-
-def set_seed(seed: int) -> None:
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def default_transform() -> Compose:
-    return Compose(
-        [
-            Resize((224, 224)),
-            ToTensor(),
-            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
-
-
-def parse_bool(v) -> bool:
-    if isinstance(v, bool):
-        return v
-    return str(v).strip().lower() in {"1", "true", "yes", "y"}
+from src.utils import get_device, set_seed
+import src.utils.const as CONST
+from src.utils.vision import imagenet_eval_transform_224
 
 
 def choose_best_from_csv(csv_path: Path) -> tuple[str, str, bool]:
-    df = pd.read_csv(csv_path)
-
-    best = df.sort_values("transrate", ascending=False).iloc[0]
-    return str(best["model"]), str(best["weight"]), parse_bool(best["is_random"])
+    return choose_best_model_from_csv(csv_path)
 
 
-def resolve_weight(model_name: str, weight_name: str, is_random: bool):
-    if is_random:
-        return None
-
-    enum_cls = models.get_model_weights(model_name)
-
-    return getattr(enum_cls, weight_name)
-
-
-def get_resnet_blocks(model: torch.nn.Module) -> list[tuple[str, torch.nn.Module]]:
-    blocks: list[tuple[str, torch.nn.Module]] = []
-    for layer_name in ["layer1", "layer2", "layer3", "layer4"]:
-        layer = getattr(model, layer_name, None)
-        if layer is None:
-            continue
-        for i, block in enumerate(layer):
-            blocks.append((f"{layer_name}.{i}", block))
-
-    return blocks
-
-
-def select_from_end(blocks: list[tuple[str, torch.nn.Module]], count: int) -> list[tuple[str, str, torch.nn.Module]]:
+def select_from_end(
+    blocks: list[tuple[str, torch.nn.Module]], count: int
+) -> list[tuple[str, str, torch.nn.Module]]:
     selected = list(reversed(blocks))[:count]
     out: list[tuple[str, str, torch.nn.Module]] = []
     for idx, (name, module) in enumerate(selected):
@@ -115,7 +58,9 @@ def extract_block_features_and_labels(
     handle = block.register_forward_hook(_hook)
 
     with torch.no_grad():
-        for x_batch, y_batch in tqdm(data_loader, desc=progress_desc, unit="batch", leave=False):
+        for x_batch, y_batch in tqdm(
+            data_loader, desc=progress_desc, unit="batch", leave=False
+        ):
             _ = model(x_batch.to(device))
             y_list.append(y_batch.cpu().numpy())
 
@@ -135,17 +80,24 @@ def evaluate_layers(
     batch_size: int,
     num_workers: int,
 ) -> pd.DataFrame:
-    set_seed(SEED)
+    set_seed(CONST.SEED)
     if is_random:
-        set_seed(SEED)
+        set_seed(CONST.SEED)
 
     device = get_device()
     print(f"Device: {device}")
 
-    weight_obj = resolve_weight(model_name, weight_name, is_random)
-    model = models.get_model(model_name, weights=weight_obj).to(device)
+    model, _ = load_backbone_and_target_block(
+        model_name=model_name,
+        weight_name=weight_name,
+        is_random=is_random,
+        block_name="layer4.0",
+        device=device,
+    )
 
-    dataset = COCODroneBirdCrops(dataset_root=dataset_root, transform=default_transform())
+    dataset = COCODroneBirdCrops(
+        dataset_root=dataset_root, transform=imagenet_eval_transform_224()
+    )
 
     loader = DataLoader(
         dataset=dataset,
@@ -155,11 +107,13 @@ def evaluate_layers(
         pin_memory=torch.cuda.is_available(),
     )
 
-    blocks = get_resnet_blocks(model)
+    blocks = list(backbone_get_resnet_blocks(model).items())
     selected = select_from_end(blocks, count=max_depth + 1)
 
     records: list[dict] = []
-    for tag, block_name, block_module in tqdm(selected, desc="Layer selection", unit="layer"):
+    for tag, block_name, block_module in tqdm(
+        selected, desc="Layer selection", unit="layer"
+    ):
         z, y = extract_block_features_and_labels(
             model=model,
             block=block_module,
@@ -197,6 +151,7 @@ def make_plot(df: pd.DataFrame, output_path: Path) -> None:
     plot_df = df.copy()
 
     if "order" not in plot_df.columns:
+
         def _order_key(tag: str) -> int:
             return 0 if tag == "L" else int(str(tag).split("-")[1])
 
@@ -235,17 +190,21 @@ def main() -> None:
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=DEFAULT_DATASET_ROOT,
+        default=CONST.DEFAULT_DATASET_ROOT,
         help="Path to the dataset root (AOD_4).",
     )
     parser.add_argument(
         "--results-csv",
         type=Path,
-        default=DEFAULT_RESULTS_CSV,
+        default=CONST.DEFAULT_RESULTS_CSV,
         help="Model selection CSV used to auto-pick the best model if --model/--weight are not provided.",
     )
-    parser.add_argument("--model", type=str, default=None, help="Model name (optional).")
-    parser.add_argument("--weight", type=str, default=None, help="Weight enum name (optional).")
+    parser.add_argument(
+        "--model", type=str, default=None, help="Model name (optional)."
+    )
+    parser.add_argument(
+        "--weight", type=str, default=None, help="Weight enum name (optional)."
+    )
     parser.add_argument(
         "--is-random",
         action="store_true",
@@ -262,7 +221,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR,
+        default=CONST.DEFAULT_OUTPUT_DIR,
         help="Output directory for CSV and plot.",
     )
     parser.add_argument(
