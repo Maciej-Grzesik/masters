@@ -26,7 +26,6 @@ class StatisticalTestResult:
 
 
 def _safe_wilcoxon(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-    # For identical vectors Wilcoxon may fail; keep deterministic fallback.
     try:
         stat, pvalue = wilcoxon(x, y, zero_method="wilcox", alternative="two-sided")
         return float(stat), float(pvalue)

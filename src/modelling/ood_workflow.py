@@ -6,10 +6,8 @@ from itertools import combinations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
@@ -26,6 +24,11 @@ from src.modelling.backbone_utils import (
 )
 from src.modelling.gmm import GMMOOD
 from src.modelling.mahobian import MahalanobisOOD
+from src.modelling.ood_plots import (
+    plot_fold_metrics_summary,
+    plot_ood_curves,
+    plot_score_distribution,
+)
 from src.modelling.statistical_protocol import run_paired_tests
 from src.utils.train import TrainConfig, train
 from src.utils.get_device import get_device
@@ -46,16 +49,13 @@ class ExperimentConfig:
     methods: tuple[str, ...]
     model_selection_csv: Path
     layer_selection_csv: Path | None
-    model_name: str | None
-    weight_name: str | None
-    is_random: bool | None
-    block_name: str | None
     train_epochs: int
     learning_rate: float
     weight_decay: float
     early_stopping_patience: int
     early_stopping_min_delta: float
     train_val_ratio: float
+    plots_dir: Path
 
 
 DEFAULT_METHODS = (
@@ -359,6 +359,7 @@ def evaluate_fold(
     fold_id: int,
     seed: int,
     method_names: tuple[str, ...],
+    plots_dir: Path,
 ) -> list[dict]:
     methods = build_methods(method_names=method_names, seed=seed, fold_id=fold_id)
 
@@ -375,6 +376,22 @@ def evaluate_fold(
 
         auroc = roc_auc_score(eval_y, scores)
         loss = 1.0 - float(auroc)
+
+        method_plot_dir = plots_dir / method_name
+        plot_ood_curves(
+            y_true=eval_y.astype(np.int64),
+            ood_scores=scores.astype(np.float64),
+            method_name=method_name,
+            fold_id=fold_id,
+            out_dir=method_plot_dir,
+        )
+        plot_score_distribution(
+            y_true=eval_y.astype(np.int64),
+            ood_scores=scores.astype(np.float64),
+            method_name=method_name,
+            fold_id=fold_id,
+            out_dir=method_plot_dir,
+        )
 
         rows.append(
             {
@@ -416,49 +433,28 @@ def build_evaluation_set(
     return eval_x, eval_y
 
 
-def make_method_boxplot(df: pd.DataFrame, output_path: Path) -> None:
-    sns.set_theme(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    sns.boxplot(data=df, x="method", y="auroc", ax=ax)
-    sns.stripplot(data=df, x="method", y="auroc", ax=ax, color="black", alpha=0.6)
-    ax.set_title("OOD AUROC across folds")
-    ax.set_ylim(0.0, 1.0)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=220)
-    plt.close(fig)
-
-
 def run_experiment(config: ExperimentConfig) -> dict:
     set_seed(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_name, weight_name, is_random = (
-        config.model_name,
-        config.weight_name,
-        config.is_random,
+    model_name, weight_name, is_random = choose_best_model_from_csv(
+        config.model_selection_csv
     )
 
-    if model_name is None or weight_name is None or is_random is None:
-        model_name, weight_name, is_random = choose_best_model_from_csv(
-            config.model_selection_csv
+    layer_csv = config.layer_selection_csv
+    if layer_csv is None:
+        layer_csv = (
+            CONST.PROJECT_ROOT
+            / "outputs"
+            / "transrate"
+            / f"layer_selection_{model_name}__{weight_name}.csv"
         )
-
-    block_name = config.block_name
-    if block_name is None:
-        layer_csv = config.layer_selection_csv
-        if layer_csv is None:
-            layer_csv = (
-                CONST.PROJECT_ROOT
-                / "outputs"
-                / "transrate"
-                / f"layer_selection_{model_name}__{weight_name}.csv"
-            )
-        if not layer_csv.exists():
-            raise FileNotFoundError(
-                f"Layer-selection CSV not found: {layer_csv}. "
-                "Run layer selection first or pass --layer-selection-csv/--block-name."
-            )
-        block_name = choose_best_block_from_csv(layer_csv)
+    if not layer_csv.exists():
+        raise FileNotFoundError(
+            f"Layer-selection CSV not found: {layer_csv}. "
+            "Run layer selection first or pass --layer-selection-csv."
+        )
+    block_name = choose_best_block_from_csv(layer_csv)
 
     selected_labels = tuple(dict.fromkeys([*config.id_labels, config.ood_label]))
     dataset = COCODroneBirdCrops(
@@ -555,13 +551,18 @@ def run_experiment(config: ExperimentConfig) -> dict:
                 fold_idx,
                 config.seed,
                 method_names=config.methods,
+                plots_dir=config.plots_dir / "per_method",
             )
         )
 
     df = pd.DataFrame(all_rows).sort_values(["method", "fold"]).reset_index(drop=True)
     df.to_csv(config.output_dir / "fold_metrics.csv", index=False)
 
-    make_method_boxplot(df, config.output_dir / "method_auroc_boxplot.png")
+    plot_fold_metrics_summary(
+        results_df=df,
+        out_dir=config.plots_dir / "summary",
+        metrics=("auroc", "f1", "accuracy", "loss"),
+    )
 
     losses = {
         method: df[df["method"] == method].sort_values("fold")["loss"].to_numpy(dtype=np.float64)
@@ -590,6 +591,7 @@ def run_experiment(config: ExperimentConfig) -> dict:
             **asdict(config),
             "dataset_root": str(config.dataset_root),
             "output_dir": str(config.output_dir),
+            "plots_dir": str(config.plots_dir),
             "model_selection_csv": str(config.model_selection_csv),
             "layer_selection_csv": (
                 str(config.layer_selection_csv) if config.layer_selection_csv is not None else None
@@ -648,7 +650,6 @@ def parse_args() -> argparse.Namespace:
         help="OOD label, e.g. bird. If omitted, inferred automatically.",
     )
     parser.add_argument("--k-folds", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=CONST.SEED)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--train-epochs", type=int, default=20)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
@@ -662,13 +663,6 @@ def parse_args() -> argparse.Namespace:
         default=CONST.PROJECT_ROOT / "outputs" / "ood_training",
     )
     parser.add_argument(
-        "--methods",
-        type=str,
-        nargs="*",
-        default=list(DEFAULT_METHODS),
-        help="OOD methods to run. Default includes >2 variants.",
-    )
-    parser.add_argument(
         "--model-selection-csv",
         type=Path,
         default=CONST.PROJECT_ROOT / "outputs" / "transrate" / "resnet_transrate_results.csv",
@@ -680,18 +674,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional layer-selection CSV. If missing, inferred from selected model/weight.",
     )
-    parser.add_argument("--model", type=str, default=None, help="Override selected model.")
-    parser.add_argument("--weight", type=str, default=None, help="Override selected weight.")
     parser.add_argument(
-        "--is-random",
-        action="store_true",
-        help="Use random initialization for overridden model.",
-    )
-    parser.add_argument(
-        "--block-name",
-        type=str,
+        "--plots-dir",
+        type=Path,
         default=None,
-        help="Override selected block name (e.g. layer4.2).",
+        help="Directory for OOD evaluation plots. Defaults to <output-dir>/plots.",
     )
     return parser.parse_args()
 
@@ -709,22 +696,19 @@ def main() -> None:
         id_labels=inferred_id,
         ood_label=inferred_ood,
         k_folds=args.k_folds,
-        seed=args.seed,
+        seed=CONST.SEED,
         batch_size=args.batch_size,
         output_dir=args.output_dir,
-        methods=tuple(args.methods),
+        methods=tuple(DEFAULT_METHODS),
         model_selection_csv=args.model_selection_csv,
         layer_selection_csv=args.layer_selection_csv,
-        model_name=args.model,
-        weight_name=args.weight,
-        is_random=(True if args.model is not None and args.is_random else None),
-        block_name=args.block_name,
         train_epochs=args.train_epochs,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         early_stopping_patience=args.early_stopping_patience,
         early_stopping_min_delta=args.early_stopping_min_delta,
         train_val_ratio=args.train_val_ratio,
+        plots_dir=args.plots_dir or (args.output_dir / "plots"),
     )
 
     summary = run_experiment(config)

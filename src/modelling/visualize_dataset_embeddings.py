@@ -77,16 +77,41 @@ def _resolve_backbone_choice(args: argparse.Namespace) -> tuple[str, str, bool, 
 def _plot_embedding(df: pd.DataFrame, x_col: str, y_col: str, title: str, path: Path) -> None:
     sns.set_theme(style="whitegrid")
     fig, ax = plt.subplots(figsize=(9, 7))
-    sns.scatterplot(
-        data=df,
-        x=x_col,
-        y=y_col,
-        hue="label",
-        style="label",
-        alpha=0.75,
-        s=45,
-        ax=ax,
-    )
+
+    id_df = df[df["is_ood"] == 0]
+    id_labels = sorted(id_df["label"].unique())
+    id_palette = sns.color_palette("GnBu", n_colors=max(2, len(id_labels) + 1))
+    id_color_map = {lbl: id_palette[i + 1] for i, lbl in enumerate(id_labels)}
+
+    for lbl in id_labels:
+        part = id_df[id_df["label"] == lbl]
+        ax.scatter(
+            part[x_col],
+            part[y_col],
+            c=[id_color_map[lbl]],
+            label=str(lbl),
+            marker="o",
+            alpha=0.6,
+            s=45,
+            edgecolors="w",
+            linewidths=0.3,
+        )
+
+    ood_df = df[df["is_ood"] == 1]
+    if not ood_df.empty:
+        for lbl in sorted(ood_df["label"].unique()):
+            part = ood_df[ood_df["label"] == lbl]
+            ax.scatter(
+                part[x_col],
+                part[y_col],
+                c=["#d62728"],
+                label=str(lbl),
+                marker="x",
+                alpha=0.95,
+                s=65,
+                linewidths=1.0,
+            )
+
     ax.set_title(title)
     ax.legend(title="Class", bbox_to_anchor=(1.02, 1.0), loc="upper left")
     fig.tight_layout()
