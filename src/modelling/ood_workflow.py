@@ -67,14 +67,8 @@ DEFAULT_METHODS = (
 OOD_CANDIDATES = {"bird"}
 ID_CANDIDATES = {
     "helicopter",
-    "helicopters",
     "drone",
-    "drones",
-    "dron",
     "airplane",
-    "airplanes",
-    "samolot",
-    "samoloty",
 }
 
 
